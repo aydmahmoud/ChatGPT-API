@@ -161,7 +161,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     root.title("ChatGPT GUI")
 
-    ai_key = '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'
+    ai_key = '*API Key here*'
     
     ai_generator = AIResponseGenerator(ai_key)
 
