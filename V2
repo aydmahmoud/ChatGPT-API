@@ -1,0 +1,164 @@
+import tkinter as tk
+from tkinter import Button, Entry, Scrollbar, Text
+import sqlite3
+from openai import OpenAI
+
+class GPTConnection:
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.client = OpenAI(api_key=api_key)
+
+    def generate_response(self, prompt, engine="text-davinci-003", max_tokens=500):
+        try:
+            response = self.client.completions.create(
+                engine=engine,
+                prompt=prompt,
+                max_tokens=max_tokens,
+            )
+            text = response.choices[0].text.strip()
+            return text
+        except Exception as e:
+            print(f'An error occurred: {e}')
+            return None
+
+class DataFunctions:
+    @staticmethod
+    def structure_response(response):
+        # Initialize a list to store ideas
+        ideas = []
+
+        # Generate a response for each item in the structured list
+        for idea in response.split('.'):
+            # Check if the idea is non-empty after stripping whitespace
+            if idea.strip():
+                # Append the stripped idea to the list
+                ideas.append(idea.strip())
+
+        return ideas
+
+    # Add other data-related functions as needed
+
+class SQLFunctions:
+    @staticmethod
+    def create_database():
+        # Create or connect to the SQLite database
+        conn = sqlite3.connect('chatgpt_responses.db')
+        cursor = conn.cursor()
+
+        # Create the table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_prompt TEXT,
+                part_1 TEXT,
+                part_2 TEXT
+            )
+        ''')
+
+        # Commit the changes and close the connection
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def save_to_database(prompt, part_1, part_2):
+        # Connect to the database
+        conn = sqlite3.connect('chatgpt_responses.db')
+        cursor = conn.cursor()
+
+        # Insert the values into the table
+        cursor.execute('INSERT INTO responses (user_prompt, part_1, part_2) VALUES (?, ?, ?)', (prompt, part_1, part_2))
+
+        # Commit the changes and close the connection
+        conn.commit()
+        conn.close()
+
+class GUIManager:
+    def __init__(self, root, gpt_connection, data_functions, sql_functions):
+        self.root = root
+        self.gpt_connection = gpt_connection
+        self.data_functions = data_functions
+        self.sql_functions = sql_functions
+        self.responses = []
+
+        # Create the scrollbar before creating other widgets
+        self.scrollbar = tk.Scrollbar(self.root)
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        # Canvas widget for scrolling
+        self.canvas = tk.Canvas(self.root, yscrollcommand=self.scrollbar.set)
+        self.canvas.grid(row=0, column=0, padx=10, pady=10, sticky='nsew', columnspan=3)
+
+        # Frame inside the canvas
+        self.frame = tk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.frame, anchor='nw')
+
+        # Entry box for user prompt
+        self.entry_prompt = Entry(self.frame, width=50)
+        self.entry_prompt.grid(row=0, column=0, padx=10, pady=10, columnspan=2)
+
+        # Button to generate response
+        self.button_generate = Button(self.frame, text="Generate and Store Responses", command=self.on_generate)
+        self.button_generate.grid(row=1, column=0, padx=10, pady=10, columnspan=2)
+
+        # Text widget for displaying responses
+        self.text_display = tk.Text(self.frame, width=50, height=10)
+        self.text_display.grid(row=2, column=0, padx=10, pady=10, columnspan=2)
+
+        # Scrollbar for the entire window
+        self.scrollbar.grid(row=0, column=3, rowspan=3, sticky='ns')
+
+        # Configure the canvas and the root window for scrolling
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+        # Configure row and column weights for resizing
+        self.root.rowconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
+
+    def on_generate(self):
+        input_prompt = self.entry_prompt.get()
+
+        # Specify the GPT engine (text-davinci-003 as in your previous code)
+        engine = "text-davinci-003"
+
+        # Generate the initial response
+        initial_response = self.gpt_connection.generate_response(input_prompt, engine=engine)
+
+        if initial_response:
+            # Process and store the initial response
+            self.responses.extend(self.data_functions.structure_response(initial_response))
+            part_1 = "\n".join(self.responses)
+
+            # Update the Label text with the response list
+            if self.responses:
+                self.text_display.delete(1.0, tk.END)  # Clear previous content
+                self.text_display.insert(tk.END, part_1)
+
+            # Use the response as input for the next prompt
+            self.entry_prompt.delete(0, tk.END)  # Clear the entry box
+
+            # Generate responses for part 2
+            part_2_responses = []
+            for response in self.responses:
+                part_2_response = self.gpt_connection.generate_response(response, engine=engine)
+                if part_2_response is not None:
+                    part_2_responses.extend(self.data_functions.structure_response(part_2_response))
+            part_2 = "\n".join(part_2_responses)
+
+            # Save both parts to the database
+            self.sql_functions.save_to_database(input_prompt, part_1, part_2)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title("ChatGPT GUI")
+
+    ai_key = 'KEYHERE'
+
+    gpt_connection = GPTConnection(api_key=ai_key)
+    data_functions = DataFunctions()
+    sql_functions = SQLFunctions()
+
+    gui_manager = GUIManager(root, gpt_connection, data_functions, sql_functions)
+
+    root.mainloop()
