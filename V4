@@ -1,0 +1,185 @@
+import tkinter as tk
+from tkinter import Button, Entry, Scrollbar, Text
+import sqlite3
+from openai import OpenAI
+
+class GPTConnection:
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.client = OpenAI(api_key=api_key)
+
+    def generate_response(self, prompt, engine="text-davinci-003", max_tokens=500):
+        try:
+            response = self.client.Completion.create(
+                engine=engine,
+                prompt=prompt,
+                max_tokens=max_tokens,
+            )
+            text = response.choices[0].text.strip()
+            return text
+        except Exception as e:
+            print(f'An error occurred: {e}')
+            return None
+
+class SQLFunctions:
+    def __init__(self, db_name='chatgpt_responses.db'):
+        self.db_name = db_name
+        self.create_table()
+
+    def create_table(self):
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_prompt TEXT,
+                gpt_response TEXT
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def save_to_database(self, prompt, response):
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO responses (user_prompt, gpt_response) VALUES (?, ?)', (prompt, response))
+        conn.commit()
+        conn.close()
+
+    def export_data(self):
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM responses')
+        records = cursor.fetchall()
+        conn.close()
+        return records
+
+class DataFunctions:
+    @staticmethod
+    def export_data_as_array():
+        # Export data from the database into an array
+        data_array = []
+        
+        # Retrieve data from the database using SQLFunctions
+        exported_data = sql_functions.export_data()
+
+        # Process the exported data and convert it into an array
+        for record in exported_data:
+            # Assuming each record is a tuple with two elements (user_prompt, gpt_response)
+            data_array.append(f"User Prompt: {record[0]}, GPT Response: {record[1]}")
+
+        return data_array
+
+    @staticmethod
+    def structure_response(response):
+        # Parse and split the response
+        return [idea.strip() for idea in response.split('.') if idea.strip()]
+
+    @staticmethod
+    def generate_prompt(topic, iteration):
+        # Generate a prompt for GPT based on the topic and iteration
+        return f"Round {iteration} discussion on {topic}. Provide insights on:"
+
+
+class GUIManager:
+    def __init__(self, root, gpt_connection, sql_functions, data_functions):
+        self.root = root
+        self.gpt_connection = gpt_connection
+        self.sql_functions = sql_functions
+        self.data_functions = data_functions
+        self.responses = []
+        self.scrollbar = None
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        # Canvas widget for scrolling
+        self.canvas = tk.Canvas(self.root)
+        self.canvas.grid(row=0, column=0, padx=10, pady=10, sticky='nsew', columnspan=3)
+
+        # Frame inside the canvas
+        self.frame = tk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.frame, anchor='nw')
+
+        # Entry box for user prompt
+        self.entry_prompt = Entry(self.frame, width=50)
+        self.entry_prompt.grid(row=0, column=0, padx=10, pady=10, columnspan=2)
+
+        # Button to generate response
+        self.button_generate = Button(self.frame, text="Generate and Display Report", command=self.on_generate)
+        self.button_generate.grid(row=1, column=0, padx=10, pady=10, columnspan=2)
+
+        # Text widget for displaying responses
+        self.text_display = tk.Text(self.frame, width=50, height=10)
+        self.text_display.grid(row=2, column=0, padx=10, pady=10, columnspan=2)
+
+        # Scrollbar for the entire window
+        self.scrollbar = tk.Scrollbar(self.root, command=self.canvas.yview)
+        self.scrollbar.grid(row=0, column=3, rowspan=3, sticky='ns')
+
+        # Configure the canvas and the root window for scrolling
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+        # Configure row and column weights for resizing
+        self.root.rowconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
+
+    def on_generate(self):
+        # Export data from the database into an array
+        data_array = self.data_functions.export_data_as_array()
+
+        # Submit data array to GPT for collation and summarization
+        collated_report = self.data_functions.submit_data_to_gpt(data_array)
+
+        # Display the collated report in the Text widget
+        self.text_display.delete(1.0, tk.END)  # Clear previous content
+        self.text_display.insert(tk.END, collated_report)
+
+        # Comprehensive logging
+        self.log_to_file(f"User Prompt: {input_prompt}")
+        self.log_to_file(f"GPT Response: {initial_response}")
+        
+        # Save initial prompt and response to the database
+        self.sql_functions.save_to_database(input_prompt, initial_response)
+
+        # Process and store the initial response
+        self.responses.extend(self.data_functions.structure_response(initial_response))
+
+        # Export data from the database
+        exported_data = self.sql_functions.export_data()
+
+        # Log exported data
+        self.log_to_file(f"Exported Data: {exported_data}")
+
+        # Collate and summarize using GPT
+        collated_report = self.gpt_connection.generate_response(
+            f"Collate and summarize the following data:\n{exported_data}"
+        )
+
+        # Display the collated report
+        self.display_responses([collated_report])
+
+    def log_to_file(self, message):
+        # Log messages to a file
+        with open('log.txt', 'a') as log_file:
+            log_file.write(f"{message}\n")
+
+    def display_responses(self, responses):
+        # Display the responses in the Text widget
+        self.text_display.delete(1.0, tk.END)  # Clear previous content
+        for response in responses:
+            self.text_display.insert(tk.END, f"{response}\n")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title("ChatGPT GUI")
+
+    ai_key = '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'
+    gpt_connection = GPTConnection(ai_key)
+    sql_functions = SQLFunctions()
+    data_functions = DataFunctions()
+
+    gui_manager = GUIManager(root, gpt_connection, sql_functions, data_functions)
+
+    root.mainloop()
